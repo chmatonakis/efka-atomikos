@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import json
 from pdf_parser import parse_efka_pdf, APODOXES_DESCRIPTIONS
 
 # Set page configuration
@@ -81,7 +82,7 @@ insurable_ceiling_old = {
     '2007': 2315.00, '2008': 2384.50, '2009': 2432.25, '2010': 2432.25, '2011': 2432.25,
     '2012': 2432.25, '2013': 5546.80, '2014': 5546.80, '2015': 5546.80, '2016': 5861.00,
     '2017': 5861.00, '2018': 5861.00, '2019': 6500.00, '2020': 6500.00, '2021': 6500.00,
-    '2022': 6500.00, '2023': 7126.94, '2024': 7126.94, '2025': 7572.62
+    '2022': 6500.00, '2023': 7126.94, '2024': 7126.94, '2025': 7572.62, '2026': 7572.62
 }
 
 insurable_ceiling_new = {
@@ -89,7 +90,7 @@ insurable_ceiling_new = {
     '2007': 5279.57, '2008': 5437.96, '2009': 5543.55, '2010': 5543.55, '2011': 5543.55,
     '2012': 5546.80, '2013': 5546.80, '2014': 5546.80, '2015': 5546.80, '2016': 5861.00,
     '2017': 5861.00, '2018': 5861.00, '2019': 6500.00, '2020': 6500.00, '2021': 6500.00,
-    '2022': 6500.00, '2023': 7126.94, '2024': 7126.94, '2025': 7572.62
+    '2022': 6500.00, '2023': 7126.94, '2024': 7126.94, '2025': 7572.62, '2026': 7572.62
 }
 
 DTK_TABLE = {
@@ -131,6 +132,13 @@ DTK_TABLE = {
         2012: 1.13251, 2013: 1.14304, 2014: 1.15824, 2015: 1.17870, 2016: 1.18852,
         2017: 1.17534, 2018: 1.16803, 2019: 1.16508, 2020: 1.17981, 2021: 1.16554,
         2022: 1.06301, 2023: 1.02741, 2024: 1.00000, 2025: 1.00000
+    },
+    2026: {
+        2002: 1.57226, 2003: 1.51910, 2004: 1.47628, 2005: 1.42636, 2006: 1.38213,
+        2007: 1.34318, 2008: 1.28904, 2009: 1.27363, 2010: 1.21631, 2011: 1.17711,
+        2012: 1.15969, 2013: 1.17047, 2014: 1.18604, 2015: 1.20699, 2016: 1.21705,
+        2017: 1.20355, 2018: 1.19606, 2019: 1.19304, 2020: 1.20813, 2021: 1.19351,
+        2022: 1.08852, 2023: 1.05207, 2024: 1.02400, 2025: 1.02400, 2026: 1.00000
     }
 }
 
@@ -192,6 +200,37 @@ st.markdown(
     .stTabs [data-baseweb="tab-list"] button [data-testid="stMarkdownContainer"] p {
         font-size: 18px;
         font-weight: 700;
+    }
+    /* Red buttons */
+    .stButton > button {
+        background-color: #dc3545 !important;
+        color: white !important;
+        border: none !important;
+    }
+    .stButton > button:hover {
+        background-color: #c82333 !important;
+        color: white !important;
+    }
+    .stButton > button:active {
+        background-color: #bd2130 !important;
+    }
+    .stDownloadButton > button {
+        background-color: #dc3545 !important;
+        color: white !important;
+        border: none !important;
+    }
+    .stDownloadButton > button:hover {
+        background-color: #c82333 !important;
+        color: white !important;
+    }
+    .stFormSubmitButton > button {
+        background-color: #dc3545 !important;
+        color: white !important;
+        border: none !important;
+    }
+    .stFormSubmitButton > button:hover {
+        background-color: #c82333 !important;
+        color: white !important;
     }
     </style>
     <div class="top-bar">
@@ -532,8 +571,8 @@ if effective_file is not None and st.session_state["analysis_requested"]:
                 pension_df['ΕΤΟΣ'] = pd.to_numeric(pension_df['ΕΤΟΣ'])
 
                 dtk_year_options = sorted(DTK_TABLE.keys(), reverse=True)
-                default_dtk_index = dtk_year_options.index(2025) if 2025 in dtk_year_options else 0
-                buyout_year_options = sorted(DTK_TABLE[dtk_year_options[0]].keys())
+                default_dtk_index = dtk_year_options.index(2026) if 2026 in dtk_year_options else 0
+                buyout_year_options = sorted(DTK_TABLE[dtk_year_options[0]].keys(), reverse=True)
 
                 with st.form("pension_calc_form"):
                     col_i1, col_i2, col_i3, col_i4 = st.columns(4)
@@ -604,6 +643,68 @@ if effective_file is not None and st.session_state["analysis_requested"]:
                         [{'selector': 'th', 'props': [('text-align', 'left')]}]
                     )
                     st.dataframe(styled_pension, use_container_width=True, hide_index=True)
+
+                    # --- Εξαγωγή JSON για Syntaksi Pro ---
+                    st.markdown("---")
+                    st.subheader("Εξαγωγή για Syntaksi Pro")
+                    
+                    # Δημιουργία JSON - εξαιρούμε τη γραμμή ΕΞΑΓΟΡΑ
+                    json_data = {}
+                    for _, row in pension_df.iterrows():
+                        year = row['ΕΤΟΣ']
+                        if year == "ΕΞΑΓΟΡΑ":
+                            continue
+                        year_str = str(int(year)) if isinstance(year, (int, float)) else str(year)
+                        
+                        # ika_YYYY = ΗΜΕΡ. ΑΠΑΣΧ.
+                        json_data[f"ika_{year_str}"] = {
+                            "value": int(row['ΗΜΕΡ. ΑΠΑΣΧ.']),
+                            "type": "number"
+                        }
+                        # apodoxes_YYYY = ΕΙΣΦΟΡΙΣΙΜΕΣ ΑΠΟΔΟΧΕΣ
+                        json_data[f"apodoxes_{year_str}"] = {
+                            "value": round(row['ΕΙΣΦΟΡΙΣΙΜΕΣ ΑΠΟΔΟΧΕΣ'], 2),
+                            "type": "number"
+                        }
+                    
+                    # Προσθήκη δεδομένων εξαγοράς
+                    json_data["eksagorasmenes_imeres"] = {
+                        "value": int(buyout_days),
+                        "type": "number"
+                    }
+                    json_data["synoliko_poso_eksagoras"] = {
+                        "value": round(buyout_amount, 2),
+                        "type": "number"
+                    }
+                    json_data["dtk_eksagoras"] = {
+                        "value": round(buyout_dtk, 5),
+                        "type": "number"
+                    }
+                    
+                    # Προσθήκη ΔΤΚ αναφοράς και έτους εθνικής
+                    json_data["dtk"] = {
+                        "value": int(selected_dtk_year),
+                        "type": "number"
+                    }
+                    json_data["etos_ethnikis"] = {
+                        "value": int(selected_dtk_year),
+                        "type": "number"
+                    }
+                    
+                    json_str = json.dumps(json_data, indent=2, ensure_ascii=False)
+                    
+                    col_json1, col_json2, col_json3 = st.columns([1, 2, 1])
+                    with col_json2:
+                        st.download_button(
+                            label="📥 Λήψη JSON για Syntaksi Pro",
+                            data=json_str,
+                            file_name="efka_syntaksi_pro.json",
+                            mime="application/json",
+                            use_container_width=True
+                        )
+                    
+                    with st.expander("Προεπισκόπηση JSON"):
+                        st.code(json_str, language="json")
             else:
                  st.warning("Δεν υπάρχουν συνοπτικά δεδομένα για τον υπολογισμό των συντάξιμων αποδοχών.")
 

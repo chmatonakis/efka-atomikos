@@ -232,6 +232,15 @@ st.markdown(
         background-color: #c82333 !important;
         color: white !important;
     }
+    /* Hide Streamlit menu */
+    #MainMenu {visibility: hidden;}
+    header[data-testid="stHeader"] {visibility: hidden;}
+    div[data-testid="stToolbar"] {visibility: hidden;}
+    button[title="View app source"] {display: none;}
+    button[title="Report a bug"] {display: none;}
+    button[title="Manage app"] {display: none;}
+    div[data-testid="stDecoration"] {display: none;}
+    footer {visibility: hidden;}
     </style>
     <div class="top-bar">
         <div>
@@ -296,9 +305,11 @@ if effective_file is not None and st.session_state["analysis_requested"]:
 
     if df_monthly is not None and not df_monthly.empty:
         # Create tabs
-        tab1, tab2, tab3, tab4 = st.tabs([
-            "Πλήρης Ανάλυση",
-            "Συντάξιμες Αποδοχές",
+        tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+            "Ανάλυση Κύριας",
+            "Συντ. Αποδοχές Κύριας",
+            "Ανάλυση Επικουρικής",
+            "Συντ. Αποδοχές Επικουρικής",
             "Συνοπτικά Δεδομένα",
             "Στοιχεία χωρίς επεξεργασία"
         ])
@@ -307,7 +318,7 @@ if effective_file is not None and st.session_state["analysis_requested"]:
 
         # --- Tab 1: Full Analysis ---
         with tab1:
-            st.header("Πλήρης Ανάλυση Αποδοχών / Εισφορών / Πλαφόν")
+            st.header("Ανάλυση Κύριας Αποδοχών / Εισφορών / Πλαφόν")
             
             df_analysis = df_monthly.copy()
             period_str = df_analysis['ΠΕΡΙΟΔΟΣ'].astype(str).str.strip()
@@ -392,8 +403,15 @@ if effective_file is not None and st.session_state["analysis_requested"]:
                 if selected_package_labels:
                     selected_packages = [package_label_to_code[label] for label in selected_package_labels]
                     filtered = filtered[filtered['ΚΩΔ. ΠΑΚΕΤΟ ΚΑΛΥΨΗΣ'].astype(str).isin(selected_packages)]
-
-            df_analysis = filtered.copy()
+                
+                # Αποθήκευση φιλτραρισμένων δεδομένων στο session_state
+                st.session_state["filtered_analysis"] = filtered.copy()
+                df_analysis = filtered.copy()
+            elif "filtered_analysis" in st.session_state:
+                # Χρήση αποθηκευμένων φιλτραρισμένων δεδομένων
+                df_analysis = st.session_state["filtered_analysis"].copy()
+            else:
+                df_analysis = filtered.copy()
 
             # Υπολογισμός ΒΑΣΙΚΟ ΠΛΑΦΟΝ με βάση το επιλεγμένο ceiling_type
             ceiling_type = st.session_state.get("ceiling_type", "Παλιός")
@@ -561,11 +579,17 @@ if effective_file is not None and st.session_state["analysis_requested"]:
             st.dataframe(display_df_with_totals, use_container_width=True, hide_index=True)
 
             yearly_totals = pd.DataFrame(yearly_totals_rows)
+            # Αποθήκευση στο session_state μόνο αν εφαρμόστηκαν φίλτρα ή αν δεν υπάρχει ακόμα
+            if apply_filters or "yearly_totals" not in st.session_state:
+                st.session_state["yearly_totals"] = yearly_totals
 
         # --- Tab 2: Pensionable Earnings ---
         with tab2:
-            st.header("Υπολογισμός Συντάξιμων Αποδοχών")
+            st.header("Συντ. Αποδοχές Κύριας")
 
+            # Διάβασμα από session_state
+            yearly_totals = st.session_state.get("yearly_totals")
+            
             if yearly_totals is not None and not yearly_totals.empty:
                 pension_df = yearly_totals.copy()
                 pension_df['ΕΤΟΣ'] = pd.to_numeric(pension_df['ΕΤΟΣ'])
@@ -702,22 +726,410 @@ if effective_file is not None and st.session_state["analysis_requested"]:
                             mime="application/json",
                             use_container_width=True
                         )
-                    
-                    with st.expander("Προεπισκόπηση JSON"):
-                        st.code(json_str, language="json")
             else:
                  st.warning("Δεν υπάρχουν συνοπτικά δεδομένα για τον υπολογισμό των συντάξιμων αποδοχών.")
 
-        # --- Tab 3: Summary Data ---
+        # --- Tab 3: Επικουρική Ανάλυση (2002-2014) ---
+        yearly_totals_epik = None
+        
         with tab3:
+            st.header("Ανάλυση Επικουρικής (2002-2014)")
+            
+            df_analysis_epik = df_monthly.copy()
+            period_str_epik = df_analysis_epik['ΠΕΡΙΟΔΟΣ'].astype(str).str.strip()
+            period_str_epik = period_str_epik.str.replace(r'^(\d{1})/', r'0\1/', regex=True)
+            df_analysis_epik['ΠΕΡΙΟΔΟΣ'] = period_str_epik
+            period_dt_epik = pd.to_datetime(period_str_epik, format='%m/%Y', errors='coerce')
+            df_analysis_epik['ΕΤΟΣ'] = period_dt_epik.dt.year.astype('Int64').astype(str)
+            
+            # Φιλτράρισμα μόνο για 2002-2014
+            df_analysis_epik = df_analysis_epik[df_analysis_epik['ΕΤΟΣ'].isin([str(y) for y in range(2002, 2015)])]
+            
+            if df_analysis_epik.empty:
+                st.warning("Δεν υπάρχουν δεδομένα για την περίοδο 2002-2014.")
+            else:
+                # Φίλτρα προβολής (κενό = όλα)
+                available_years_epik = sorted([y for y in df_analysis_epik['ΕΤΟΣ'].dropna().unique()])
+                year_options_epik = ['(Όλα)'] + available_years_epik
+
+                type_codes_epik = sorted([str(t) for t in df_analysis_epik['ΤΥΠΟΣ ΑΠΟΔΟΧΩΝ'].dropna().unique()])
+                type_label_map_epik = {
+                    code: f"{code} - {APODOXES_DESCRIPTIONS.get(code, 'Άγνωστη Περιγραφή')}"
+                    for code in type_codes_epik
+                }
+                type_options_epik = [type_label_map_epik[code] for code in type_codes_epik]
+                type_label_to_code_epik = {label: code for code, label in type_label_map_epik.items()}
+
+                package_codes_epik = sorted([str(p) for p in df_analysis_epik['ΚΩΔ. ΠΑΚΕΤΟ ΚΑΛΥΨΗΣ'].dropna().unique()])
+                package_desc_map_epik = {}
+                if df_annual is not None and not df_annual.empty:
+                    package_desc_map_epik = (
+                        df_annual.dropna(subset=['ΠΑΚ. ΚΑΛ.'])
+                        .groupby('ΠΑΚ. ΚΑΛ.')['ΠΕΡΙΓΡΑΦΗ']
+                        .first()
+                        .to_dict()
+                    )
+                package_label_map_epik = {
+                    code: f"{code} - {package_desc_map_epik.get(code, '').strip()}" if package_desc_map_epik.get(code) else code
+                    for code in package_codes_epik
+                }
+                package_options_epik = [package_label_map_epik[code] for code in package_codes_epik]
+                package_label_to_code_epik = {label: code for code, label in package_label_map_epik.items()}
+
+                # Initialize session state for ceiling_type_epik
+                if "ceiling_type_epik" not in st.session_state:
+                    st.session_state["ceiling_type_epik"] = 'Παλιός'
+
+                with st.form("filters_form_epik"):
+                    col_e1, col_e2, col_e3, col_e4, col_e5, col_btn_e = st.columns([1, 1, 1, 2, 2, 1.5])
+                    with col_e1:
+                        ceiling_type_epik = st.selectbox(
+                            "Πλαφόν",
+                            ('Παλιός', 'Νέος'),
+                            index=0 if st.session_state["ceiling_type_epik"] == 'Παλιός' else 1,
+                            key="ceiling_type_select_epik"
+                        )
+                        st.session_state["ceiling_type_epik"] = ceiling_type_epik
+                    with col_e2:
+                        year_from_epik = st.selectbox("Έτος από", options=year_options_epik, index=0, key="year_from_epik")
+                    with col_e3:
+                        year_to_epik = st.selectbox("Έτος έως", options=year_options_epik, index=0, key="year_to_epik")
+                    with col_e4:
+                        selected_type_labels_epik = st.multiselect("Τύπος Αποδοχών", options=type_options_epik, default=[], key="type_epik")
+                    with col_e5:
+                        selected_package_labels_epik = st.multiselect("Πακέτο Κάλυψης", options=package_options_epik, default=[], key="package_epik")
+                    with col_btn_e:
+                        st.write("")  # Empty space for alignment
+                        st.write("")  # Empty space for alignment
+                        apply_filters_epik = st.form_submit_button("Εφαρμογή φίλτρων", use_container_width=True)
+
+                # Εφαρμογή φίλτρων
+                filtered_epik = df_analysis_epik.copy()
+                if apply_filters_epik:
+                    if year_from_epik != '(Όλα)' or year_to_epik != '(Όλα)':
+                        min_year_epik = available_years_epik[0] if available_years_epik else None
+                        max_year_epik = available_years_epik[-1] if available_years_epik else None
+                        from_year_epik = year_from_epik if year_from_epik != '(Όλα)' else min_year_epik
+                        to_year_epik = year_to_epik if year_to_epik != '(Όλα)' else max_year_epik
+                        if from_year_epik and to_year_epik and from_year_epik > to_year_epik:
+                            from_year_epik, to_year_epik = to_year_epik, from_year_epik
+                        if from_year_epik and to_year_epik:
+                            filtered_epik = filtered_epik[(filtered_epik['ΕΤΟΣ'] >= from_year_epik) & (filtered_epik['ΕΤΟΣ'] <= to_year_epik)]
+
+                    if selected_type_labels_epik:
+                        selected_types_epik = [type_label_to_code_epik[label] for label in selected_type_labels_epik]
+                        filtered_epik = filtered_epik[filtered_epik['ΤΥΠΟΣ ΑΠΟΔΟΧΩΝ'].astype(str).isin(selected_types_epik)]
+
+                    if selected_package_labels_epik:
+                        selected_packages_epik = [package_label_to_code_epik[label] for label in selected_package_labels_epik]
+                        filtered_epik = filtered_epik[filtered_epik['ΚΩΔ. ΠΑΚΕΤΟ ΚΑΛΥΨΗΣ'].astype(str).isin(selected_packages_epik)]
+                    
+                    # Αποθήκευση φιλτραρισμένων δεδομένων στο session_state
+                    st.session_state["filtered_analysis_epik"] = filtered_epik.copy()
+                    df_analysis_epik = filtered_epik.copy()
+                elif "filtered_analysis_epik" in st.session_state:
+                    # Χρήση αποθηκευμένων φιλτραρισμένων δεδομένων
+                    df_analysis_epik = st.session_state["filtered_analysis_epik"].copy()
+                else:
+                    df_analysis_epik = filtered_epik.copy()
+
+                # Υπολογισμός ΒΑΣΙΚΟ ΠΛΑΦΟΝ
+                ceiling_type_epik = st.session_state.get("ceiling_type_epik", "Παλιός")
+                ceiling_dict_epik = insurable_ceiling_old if ceiling_type_epik == 'Παλιός' else insurable_ceiling_new
+                df_analysis_epik['ΒΑΣΙΚΟ ΠΛΑΦΟΝ'] = df_analysis_epik['ΕΤΟΣ'].map(ceiling_dict_epik).fillna(0)
+
+                # Αποδοχές μήνα
+                excluded_mask_epik = df_analysis_epik['ΠΕΡΙΓΡΑΦΗ_ΑΠΟΔΟΧΩΝ'].astype(str).str.contains(
+                    r'δώρο|επίδομα\s+αδείας', case=False, regex=True
+                ) | df_analysis_epik['ΤΥΠΟΣ ΑΠΟΔΟΧΩΝ'].astype(str).isin(['03', '04', '05'])
+                df_analysis_epik['IS_SPECIAL'] = excluded_mask_epik
+                monthly_earnings_epik = (
+                    df_analysis_epik.loc[~excluded_mask_epik]
+                    .groupby('ΠΕΡΙΟΔΟΣ', dropna=False)['ΑΠΟΔΟΧΕΣ']
+                    .sum()
+                )
+                df_analysis_epik['ΑΠΟΔΟΧΕΣ ΜΗΝΑ'] = df_analysis_epik['ΠΕΡΙΟΔΟΣ'].map(monthly_earnings_epik)
+
+                # Υπολογισμός πλαφόν
+                days_map_epik = (
+                    df_analysis_epik.loc[df_analysis_epik['ΤΥΠΟΣ ΑΠΟΔΟΧΩΝ'].astype(str) == '01']
+                    .groupby('ΠΕΡΙΟΔΟΣ', dropna=False)['ΗΜΕΡ. ΑΠΑΣΧ.']
+                    .max()
+                )
+                base_plafon_map_epik = (
+                    df_analysis_epik.groupby('ΠΕΡΙΟΔΟΣ', dropna=False)['ΒΑΣΙΚΟ ΠΛΑΦΟΝ']
+                    .max()
+                )
+                plafon_month_map_epik = (base_plafon_map_epik / 25 * days_map_epik).clip(upper=base_plafon_map_epik)
+                plafon_month_map_epik = plafon_month_map_epik.fillna(base_plafon_map_epik)
+
+                df_analysis_epik['ΕΙΣΦΟΡΙΣΙΜΟ ΠΛΑΦΟΝ'] = df_analysis_epik['ΠΕΡΙΟΔΟΣ'].map(plafon_month_map_epik)
+                df_analysis_epik.loc[df_analysis_epik['ΤΥΠΟΣ ΑΠΟΔΟΧΩΝ'].astype(str) == '03', 'ΕΙΣΦΟΡΙΣΙΜΟ ΠΛΑΦΟΝ'] = df_analysis_epik['ΒΑΣΙΚΟ ΠΛΑΦΟΝ']
+                df_analysis_epik.loc[df_analysis_epik['ΤΥΠΟΣ ΑΠΟΔΟΧΩΝ'].astype(str).isin(['04', '05']), 'ΕΙΣΦΟΡΙΣΙΜΟ ΠΛΑΦΟΝ'] = df_analysis_epik['ΒΑΣΙΚΟ ΠΛΑΦΟΝ'] / 2
+
+                monthly_plafon_epik = df_analysis_epik.groupby('ΠΕΡΙΟΔΟΣ', dropna=False)['ΕΙΣΦΟΡΙΣΙΜΟ ΠΛΑΦΟΝ'].max()
+                monthly_insurable_epik = (df_analysis_epik['ΠΕΡΙΟΔΟΣ'].map(monthly_earnings_epik)
+                                     .combine(df_analysis_epik['ΠΕΡΙΟΔΟΣ'].map(monthly_plafon_epik), min))
+                df_analysis_epik['ΕΙΣΦΟΡΙΣΙΜΕΣ ΑΠΟΔΟΧΕΣ'] = monthly_insurable_epik
+
+                perikopi_map_epik = (df_analysis_epik['ΠΕΡΙΟΔΟΣ'].map(monthly_earnings_epik) -
+                                df_analysis_epik['ΠΕΡΙΟΔΟΣ'].map(monthly_plafon_epik))
+                df_analysis_epik['ΠΕΡΙΚΟΠΗ'] = perikopi_map_epik.where(perikopi_map_epik > 0, None)
+
+                df_analysis_epik.loc[df_analysis_epik['IS_SPECIAL'], 'ΕΙΣΦΟΡΙΣΙΜΕΣ ΑΠΟΔΟΧΕΣ'] = df_analysis_epik.loc[
+                    df_analysis_epik['IS_SPECIAL'], ['ΑΠΟΔΟΧΕΣ', 'ΕΙΣΦΟΡΙΣΙΜΟ ΠΛΑΦΟΝ']
+                ].min(axis=1)
+                df_analysis_epik.loc[df_analysis_epik['IS_SPECIAL'], 'ΠΕΡΙΚΟΠΗ'] = (
+                    df_analysis_epik.loc[df_analysis_epik['IS_SPECIAL'], 'ΑΠΟΔΟΧΕΣ'] -
+                    df_analysis_epik.loc[df_analysis_epik['IS_SPECIAL'], 'ΕΙΣΦΟΡΙΣΙΜΟ ΠΛΑΦΟΝ']
+                ).where(lambda s: s > 0, None)
+
+                df_analysis_epik['ΠΟΣΟΣΤΟ'] = df_analysis_epik.apply(
+                    lambda row: (row['ΕΙΣΦΟΡΕΣ'] / row['ΕΙΣΦΟΡΙΣΙΜΕΣ ΑΠΟΔΟΧΕΣ']) * 100 if row['ΕΙΣΦΟΡΙΣΙΜΕΣ ΑΠΟΔΟΧΕΣ'] > 0 else 0,
+                    axis=1
+                )
+
+                display_df_epik = df_analysis_epik.copy()
+                display_df_epik['ΕΤΟΣ_KEY'] = display_df_epik['ΕΤΟΣ']
+                display_df_epik['ΠΕΡΙΟΔΟΣ_KEY'] = display_df_epik['ΠΕΡΙΟΔΟΣ']
+                display_df_epik['ΤΥΠΟΣ_SORT'] = display_df_epik['ΤΥΠΟΣ ΑΠΟΔΟΧΩΝ'].astype(str)
+                display_df_epik = display_df_epik.sort_values(['ΕΤΟΣ_KEY', 'IS_SPECIAL', 'ΠΕΡΙΟΔΟΣ_KEY', 'ΤΥΠΟΣ_SORT'])
+
+                display_df_epik['ΕΤΟΣ'] = display_df_epik['ΕΤΟΣ'].where(~display_df_epik.duplicated(['ΕΤΟΣ_KEY']), '')
+                display_df_epik['ΠΕΡΙΟΔΟΣ'] = display_df_epik['ΠΕΡΙΟΔΟΣ'].where(~display_df_epik.duplicated(['ΕΤΟΣ_KEY', 'ΠΕΡΙΟΔΟΣ_KEY']), '')
+
+                show_month_total_epik = ~display_df_epik.duplicated(['ΕΤΟΣ_KEY', 'ΠΕΡΙΟΔΟΣ_KEY'])
+                display_df_epik['ΑΠΟΔΟΧΕΣ ΜΗΝΑ'] = display_df_epik['ΑΠΟΔΟΧΕΣ ΜΗΝΑ'].where(show_month_total_epik, '')
+                display_df_epik['ΕΙΣΦΟΡΙΣΙΜΟ ΠΛΑΦΟΝ'] = display_df_epik['ΕΙΣΦΟΡΙΣΙΜΟ ΠΛΑΦΟΝ'].where(
+                    show_month_total_epik | display_df_epik['IS_SPECIAL'], ''
+                )
+                display_df_epik['ΠΕΡΙΚΟΠΗ'] = display_df_epik['ΠΕΡΙΚΟΠΗ'].where(
+                    show_month_total_epik | display_df_epik['IS_SPECIAL'], ''
+                )
+                display_df_epik['ΕΙΣΦΟΡΙΣΙΜΕΣ ΑΠΟΔΟΧΕΣ'] = display_df_epik['ΕΙΣΦΟΡΙΣΙΜΕΣ ΑΠΟΔΟΧΕΣ'].where(
+                    show_month_total_epik | display_df_epik['IS_SPECIAL'], ''
+                )
+
+                visible_columns_epik = [
+                    'ΕΤΟΣ', 'ΠΕΡΙΟΔΟΣ', 'ΚΩΔ. ΠΑΚΕΤΟ ΚΑΛΥΨΗΣ', 'ΗΜΕΡ. ΑΠΑΣΧ.', 'ΤΥΠΟΣ ΑΠΟΔΟΧΩΝ',
+                    'ΠΕΡΙΓΡΑΦΗ_ΑΠΟΔΟΧΩΝ', 'ΑΠΟΔΟΧΕΣ', 'ΕΙΣΦΟΡΕΣ', 'ΠΟΣΟΣΤΟ', 'ΑΠΟΔΟΧΕΣ ΜΗΝΑ',
+                    'ΕΙΣΦΟΡΙΣΙΜΟ ΠΛΑΦΟΝ', 'ΠΕΡΙΚΟΠΗ', 'ΕΙΣΦΟΡΙΣΙΜΕΣ ΑΠΟΔΟΧΕΣ'
+                ]
+                display_df_visible_epik = display_df_epik[visible_columns_epik]
+
+                rows_epik = []
+                summary_flags_epik = []
+                yearly_totals_rows_epik = []
+                years_epik = sorted([y for y in display_df_epik['ΕΤΟΣ_KEY'].dropna().unique()])
+                
+                for year in years_epik:
+                    year_mask = display_df_epik['ΕΤΟΣ_KEY'] == year
+                    year_rows = display_df_visible_epik[year_mask]
+                    for _, row in year_rows.iterrows():
+                        rows_epik.append(row.to_dict())
+                        summary_flags_epik.append(False)
+
+                    totals_epik = df_analysis_epik[df_analysis_epik['ΕΤΟΣ'] == str(year)]
+                    summary_row_epik = {col: '' for col in visible_columns_epik}
+                    summary_row_epik['ΕΤΟΣ'] = f"ΣΥΝΟΛΟ {year}"
+                    total_days_epik = totals_epik['ΗΜΕΡ. ΑΠΑΣΧ.'].sum()
+                    total_apodoxes_epik = totals_epik['ΑΠΟΔΟΧΕΣ'].sum()
+                    summary_row_epik['ΑΠΟΔΟΧΕΣ'] = round(total_apodoxes_epik, 2)
+                    summary_row_epik['ΕΙΣΦΟΡΕΣ'] = round(totals_epik['ΕΙΣΦΟΡΕΣ'].sum(), 2)
+
+                    perikopi_month_sum_epik = (
+                        totals_epik.loc[~totals_epik['IS_SPECIAL']]
+                        .groupby('ΠΕΡΙΟΔΟΣ', dropna=False)['ΠΕΡΙΚΟΠΗ']
+                        .max()
+                        .fillna(0)
+                        .sum()
+                    )
+                    perikopi_special_sum_epik = totals_epik.loc[totals_epik['IS_SPECIAL'], 'ΠΕΡΙΚΟΠΗ'].fillna(0).sum()
+                    total_perikopi_epik = perikopi_month_sum_epik + perikopi_special_sum_epik
+                    total_insurable_epik = round(total_apodoxes_epik - total_perikopi_epik, 2)
+                    summary_row_epik['ΕΙΣΦΟΡΙΣΙΜΕΣ ΑΠΟΔΟΧΕΣ'] = total_insurable_epik
+                    rows_epik.append(summary_row_epik)
+                    summary_flags_epik.append(True)
+
+                    yearly_totals_rows_epik.append({
+                        'ΕΤΟΣ': year,
+                        'ΗΜΕΡ. ΑΠΑΣΧ.': total_days_epik,
+                        'ΑΠΟΔΟΧΕΣ': round(total_apodoxes_epik, 2),
+                        'ΕΙΣΦΟΡΙΣΙΜΕΣ ΑΠΟΔΟΧΕΣ': total_insurable_epik
+                    })
+
+                    blank_row_epik = {col: '' for col in visible_columns_epik}
+                    rows_epik.append(blank_row_epik)
+                    summary_flags_epik.append(False)
+
+                display_df_with_totals_epik = pd.DataFrame(rows_epik, columns=visible_columns_epik)
+                display_df_with_totals_epik = round_float_columns(display_df_with_totals_epik)
+                display_df_with_totals_epik = round_numeric_columns(
+                    display_df_with_totals_epik,
+                    columns=['ΑΠΟΔΟΧΕΣ', 'ΕΙΣΦΟΡΕΣ', 'ΠΟΣΟΣΤΟ', 'ΑΠΟΔΟΧΕΣ ΜΗΝΑ',
+                            'ΕΙΣΦΟΡΙΣΙΜΟ ΠΛΑΦΟΝ', 'ΠΕΡΙΚΟΠΗ', 'ΕΙΣΦΟΡΙΣΙΜΕΣ ΑΠΟΔΟΧΕΣ'],
+                    decimals=2
+                )
+                for col in ['ΗΜΕΡ. ΑΠΑΣΧ.', 'ΕΙΣΦΟΡΕΣ', 'ΠΟΣΟΣΤΟ']:
+                    if col in display_df_with_totals_epik.columns:
+                        display_df_with_totals_epik[col] = display_df_with_totals_epik[col].replace(0, '')
+
+                st.dataframe(display_df_with_totals_epik, use_container_width=True, hide_index=True)
+
+                yearly_totals_epik = pd.DataFrame(yearly_totals_rows_epik)
+                # Αποθήκευση στο session_state μόνο αν εφαρμόστηκαν φίλτρα ή αν δεν υπάρχει ακόμα
+                if apply_filters_epik or "yearly_totals_epik" not in st.session_state:
+                    st.session_state["yearly_totals_epik"] = yearly_totals_epik
+
+        # --- Tab 4: Συντάξιμες Αποδοχές Επικουρικής ---
+        with tab4:
+            st.header("Συντ. Αποδοχές Επικουρικής")
+
+            # Διάβασμα από session_state
+            yearly_totals_epik = st.session_state.get("yearly_totals_epik")
+            
+            if yearly_totals_epik is not None and not yearly_totals_epik.empty:
+                pension_df_epik = yearly_totals_epik.copy()
+                pension_df_epik['ΕΤΟΣ'] = pd.to_numeric(pension_df_epik['ΕΤΟΣ'])
+
+                dtk_year_options_epik = sorted(DTK_TABLE.keys(), reverse=True)
+                default_dtk_index_epik = dtk_year_options_epik.index(2026) if 2026 in dtk_year_options_epik else 0
+                buyout_year_options_epik = sorted([y for y in DTK_TABLE[dtk_year_options_epik[0]].keys() if y <= 2014], reverse=True)
+
+                with st.form("pension_calc_form_epik"):
+                    col_i1e, col_i2e, col_i3e, col_i4e = st.columns(4)
+                    with col_i1e:
+                        selected_dtk_year_epik = st.selectbox(
+                            "Έτος Αναφοράς ΔΤΚ",
+                            options=dtk_year_options_epik,
+                            index=default_dtk_index_epik,
+                            key="dtk_year_epik"
+                        )
+                    with col_i2e:
+                        buyout_days_epik = st.number_input("Ημέρες Εξαγοράς", min_value=0, step=1, value=0, key="buyout_days_epik")
+                    with col_i3e:
+                        buyout_year_epik = st.selectbox("Έτος Εξαγοράς", options=buyout_year_options_epik, index=0, key="buyout_year_epik")
+                    with col_i4e:
+                        buyout_amount_epik = st.number_input("Ποσό Εξαγοράς", min_value=0.0, step=1.0, value=0.0, key="buyout_amount_epik")
+
+                    calculate_epik = st.form_submit_button("Υπολογισμός")
+
+                if not calculate_epik:
+                    st.info("Πατήστε «Υπολογισμός» για να εφαρμοστούν οι αλλαγές.")
+                else:
+                    dtk_factors_epik = DTK_TABLE[selected_dtk_year_epik]
+                    buyout_dtk_epik = dtk_factors_epik.get(buyout_year_epik, 1.0)
+                    buyout_insurable_epik = buyout_amount_epik / 0.06
+
+                    pension_df_epik['ΣΥΝΤΕΛΕΣΤΗΣ ΔΤΚ'] = pension_df_epik['ΕΤΟΣ'].map(dtk_factors_epik).fillna(1.0)
+                    pension_df_epik['ΤΕΛΙΚΕΣ ΣΥΝΤΑΞΙΜΕΣ ΑΠΟΔΟΧΕΣ'] = (
+                        pension_df_epik['ΕΙΣΦΟΡΙΣΙΜΕΣ ΑΠΟΔΟΧΕΣ'] * pension_df_epik['ΣΥΝΤΕΛΕΣΤΗΣ ΔΤΚ']
+                    )
+
+                    if buyout_days_epik > 0 or buyout_amount_epik > 0:
+                        pension_df_epik = pd.concat([
+                            pension_df_epik,
+                            pd.DataFrame([{
+                                'ΕΤΟΣ': buyout_year_epik,
+                                'ΗΜΕΡ. ΑΠΑΣΧ.': buyout_days_epik,
+                                'ΑΠΟΔΟΧΕΣ': 0,
+                                'ΕΙΣΦΟΡΙΣΙΜΕΣ ΑΠΟΔΟΧΕΣ': buyout_insurable_epik,
+                                'ΣΥΝΤΕΛΕΣΤΗΣ ΔΤΚ': buyout_dtk_epik,
+                                'ΤΕΛΙΚΕΣ ΣΥΝΤΑΞΙΜΕΣ ΑΠΟΔΟΧΕΣ': buyout_insurable_epik * buyout_dtk_epik,
+                            }])
+                        ], ignore_index=True)
+                        pension_df_epik.loc[pension_df_epik.index[-1], 'ΕΤΟΣ'] = "ΕΞΑΓΟΡΑ"
+
+                    total_days_epik_sum = pension_df_epik['ΗΜΕΡ. ΑΠΑΣΧ.'].sum()
+                    total_pensionable_earnings_epik = pension_df_epik['ΤΕΛΙΚΕΣ ΣΥΝΤΑΞΙΜΕΣ ΑΠΟΔΟΧΕΣ'].sum()
+                    months_from_2002_epik = total_days_epik_sum / 25 if total_days_epik_sum > 0 else 0
+                    average_pensionable_salary_epik = (
+                        total_pensionable_earnings_epik / months_from_2002_epik if months_from_2002_epik > 0 else 0
+                    )
+
+                    col1e, col2e, col3e, col4e = st.columns(4)
+                    col1e.metric("Σύνολο Ημερών", format_number_gr(total_days_epik_sum, 0))
+                    col2e.metric("Μήνες (2002-2014)", format_number_gr(months_from_2002_epik, 2))
+                    col3e.metric("Σύνολο Συντάξιμων Αποδοχών", format_currency_gr(total_pensionable_earnings_epik))
+                    col4e.metric("Μέσος Συντάξιμος Μισθός", format_currency_gr(average_pensionable_salary_epik))
+
+                    pension_display_epik = format_df_for_display(
+                        pension_df_epik,
+                        currency_cols=['ΑΠΟΔΟΧΕΣ', 'ΕΙΣΦΟΡΙΣΙΜΕΣ ΑΠΟΔΟΧΕΣ', 'ΤΕΛΙΚΕΣ ΣΥΝΤΑΞΙΜΕΣ ΑΠΟΔΟΧΕΣ'],
+                        int_cols=['ΗΜΕΡ. ΑΠΑΣΧ.'],
+                        float_cols_decimals={'ΣΥΝΤΕΛΕΣΤΗΣ ΔΤΚ': 5},
+                    )
+                    styled_pension_epik = pension_display_epik.style.set_properties(**{'text-align': 'left'}).set_table_styles(
+                        [{'selector': 'th', 'props': [('text-align', 'left')]}]
+                    )
+                    st.dataframe(styled_pension_epik, use_container_width=True, hide_index=True)
+
+                    # --- Εξαγωγή JSON για Syntaksi Pro (Επικουρική) ---
+                    st.markdown("---")
+                    st.subheader("Εξαγωγή για Syntaksi Pro (Επικουρική)")
+                    
+                    json_data_epik = {}
+                    for _, row in pension_df_epik.iterrows():
+                        year = row['ΕΤΟΣ']
+                        if year == "ΕΞΑΓΟΡΑ":
+                            continue
+                        year_str = str(int(year)) if isinstance(year, (int, float)) else str(year)
+                        
+                        json_data_epik[f"ika_{year_str}"] = {
+                            "value": int(row['ΗΜΕΡ. ΑΠΑΣΧ.']),
+                            "type": "number"
+                        }
+                        json_data_epik[f"apodoxes_{year_str}"] = {
+                            "value": round(row['ΕΙΣΦΟΡΙΣΙΜΕΣ ΑΠΟΔΟΧΕΣ'], 2),
+                            "type": "number"
+                        }
+                    
+                    json_data_epik["eksagorasmenes_imeres"] = {
+                        "value": int(buyout_days_epik),
+                        "type": "number"
+                    }
+                    json_data_epik["synoliko_poso_eksagoras"] = {
+                        "value": round(buyout_amount_epik, 2),
+                        "type": "number"
+                    }
+                    json_data_epik["dtk_eksagoras"] = {
+                        "value": round(buyout_dtk_epik, 5),
+                        "type": "number"
+                    }
+                    json_data_epik["dtk"] = {
+                        "value": int(selected_dtk_year_epik),
+                        "type": "number"
+                    }
+                    json_data_epik["etos_ethnikis"] = {
+                        "value": int(selected_dtk_year_epik),
+                        "type": "number"
+                    }
+                    
+                    json_str_epik = json.dumps(json_data_epik, indent=2, ensure_ascii=False)
+                    
+                    col_json1e, col_json2e, col_json3e = st.columns([1, 2, 1])
+                    with col_json2e:
+                        st.download_button(
+                            label="📥 Λήψη JSON Επικουρικής",
+                            data=json_str_epik,
+                            file_name="efka_epikouriki_syntaksi_pro.json",
+                            mime="application/json",
+                            use_container_width=True,
+                            key="download_json_epik"
+                        )
+            else:
+                st.warning("Δεν υπάρχουν δεδομένα για την περίοδο 2002-2014.")
+
+        # --- Tab 5: Summary Data ---
+        with tab5:
             st.header("Συνοπτικά Ετήσια Δεδομένα")
             if df_annual is not None and not df_annual.empty:
                 st.dataframe(round_float_columns(df_annual), use_container_width=True, hide_index=True)
             else:
                 st.warning("Δεν βρέθηκαν συνοπτικά ετήσια δεδομένα.")
 
-        # --- Tab 4: Raw Data ---
-        with tab4:
+        # --- Tab 6: Raw Data ---
+        with tab6:
             st.header("Στοιχεία χωρίς επεξεργασία")
             st.dataframe(round_float_columns(df_monthly), use_container_width=True, hide_index=True)
 

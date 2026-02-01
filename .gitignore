@@ -1,0 +1,27 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+venv/
+env/
+.env
+
+# IDE
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# PDF files (sensitive data)
+*.pdf
+
+# Local development files
+_check_parse.py
+_dump_row.py
+
+# Streamlit
+.streamlit/secrets.toml

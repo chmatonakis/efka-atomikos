@@ -1,6 +1,9 @@
 import streamlit as st
+import streamlit.components.v1 as components
 import pandas as pd
 import json
+import html
+import re
 from pdf_parser import parse_efka_pdf, APODOXES_DESCRIPTIONS
 
 # Set page configuration
@@ -76,6 +79,90 @@ def round_numeric_columns(df, columns, decimals=2):
             df_out[col] = numeric_values.round(decimals).where(numeric_values.notna(), df_out[col])
     return df_out
 
+def dataframe_to_printable_html(df, title="Πίνακας", person_name=None):
+    """Δημιουργεί πλήρες HTML αρχείο για προβολή/εκτύπωση (οριζόντιο προσανατολισμός, hover ανά γραμμή)."""
+    if df is None or df.empty:
+        return None
+    df_clean = df.fillna("")
+    table_html = df_clean.to_html(index=False, classes="print-table", border=0)
+    # Γραμμές που περιέχουν ΣΥΝΟΛΟ: ελαφρύ γκρι φόντο
+    table_html = re.sub(
+        r'<tr[^>]*>((?:(?!</tr>).)*?ΣΥΝΟΛΟ(?:(?!</tr>).)*?)</tr>',
+        r'<tr class="row-total">\1</tr>',
+        table_html, flags=re.DOTALL | re.IGNORECASE
+    )
+
+    safe_title = html.escape(str(title))
+    safe_name = html.escape(str(person_name)) if person_name else ""
+    name_block = f'<p class="print-name">{safe_name}</p>' if safe_name else ""
+
+    doc = f"""<!DOCTYPE html>
+<html lang="el">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{safe_title}</title>
+<style>
+body {{ font-family: sans-serif; margin: 1rem; color: #262730; }}
+.print-name {{ text-align: center; font-size: 1.1rem; font-weight: 700; margin-bottom: 0.5rem; }}
+.print-title {{ font-size: 1.25rem; font-weight: 700; margin-bottom: 1rem; text-align: left; }}
+.print-table {{ width: 100%; border-collapse: collapse; text-align: left; font-size: 0.9rem; }}
+.print-table th, .print-table td {{ padding: 10px 12px; text-align: left; border: none; border-bottom: 1px solid #d1d5db; }}
+.print-table th {{ background: #f9fafb; font-weight: 700; font-size: 0.8rem; }}
+.print-table td:nth-child(1), .print-table td:nth-child(2), .print-table th:nth-child(1), .print-table th:nth-child(2) {{ font-weight: 700; }}
+.print-table tr.row-total {{ background: #e5e7eb; font-weight: 700; }}
+.print-table tbody tr:hover {{ background: #fff4e6; }}
+.header-row {{ display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 0.5rem; }}
+.header-row .print-title {{ margin: 0; }}
+.btn-print {{ background: #dc3545; color: white; border: none; padding: 8px 16px; border-radius: 6px; font-size: 0.9rem; font-weight: 600; cursor: pointer; }}
+.btn-print:hover {{ background: #c82333; }}
+@media print {{
+  @page {{ size: landscape; }}
+  body {{ margin: 1.5cm; }}
+  .no-print {{ display: none !important; }}
+  .print-title {{ margin-bottom: 12px; }}
+  .print-table {{ page-break-inside: auto; }}
+  .print-table tr {{ page-break-inside: avoid; page-break-after: auto; }}
+  .print-footer {{ margin-top: 1.5rem; }}
+}}
+.print-footer {{ margin-top: 1.5rem; padding-top: 0.75rem; border-top: 1px solid #d1d5db; font-size: 0.75rem; color: #6b7280; line-height: 1.4; }}
+</style>
+</head>
+<body>
+{name_block}
+<div class="header-row">
+  <h1 class="print-title">{safe_title}</h1>
+  <div class="no-print" style="display:flex;gap:8px;">
+    <button type="button" class="btn-print" onclick="window.print();">🖨 Εκτύπωση</button>
+  </div>
+</div>
+{table_html}
+<div class="print-footer"><strong>ΣΗΜΑΝΤΙΚΉ ΣΗΜΕΙΩΣΗ:</strong> Η παρούσα αναφορά βασίζεται αποκλειστικά στα δεδομένα που εμφανίζονται στο αρχείο ΑΤΟΜΙΚΟΣ ΛΟΓΑΡΙΑΣΜΟΣ/e-ΕΦΚΑ και αποτελεί απλή επεξεργασία των καταγεγραμμένων εγγραφών με σκοπό τη διευκόλυνση μελέτης του ασφ. ιστορικού του ασφαλισμένου. Η πλατφόρμα ΑΤΟΜΙΚΟΣ ΛΟΓΑΡΙΑΣΜΟΣ ή η ανάλυση από την εφαρμογή αυτή μπορεί να περιέχει κενά ή σφάλματα, και η αναφορά που εξάγεται δεν υποκαθιστά νομική ή οικονομική συμβουλή σε καμία περίπτωση. Αποκλειστικά υπεύθυνος για την επαλήθευση των στοιχείων είναι ο χρήστης. Για θέματα συνταξιοδότησης και οριστικές απαντήσεις αρμόδιος παραμένει αποκλειστικά ο e-ΕΦΚΑ.</div>
+</body>
+</html>"""
+    return doc
+
+def html_open_in_new_tab_component(html_content):
+    """Επιστρέφει HTML snippet για iframe: κουμπί Εκτύπωση που ανοίγει το html_content σε νέα καρτέλα (blob URL)."""
+    if not html_content:
+        return ""
+    # Ενσωμάτωση ως JS string: json.dumps + escape </script> ώστε να μην κλείνει το <script> του wrapper
+    js_content = json.dumps(html_content).replace("</script>", "<\\/script>")
+    return f"""<!DOCTYPE html><html><head><meta charset="utf-8"></head>
+<body style="margin:0;padding:6px 0;font-family:sans-serif;display:flex;justify-content:flex-end;">
+<button type="button" id="openTabBtn" style="background:#dc3545;color:white;border:none;padding:14px 28px;border-radius:8px;cursor:pointer;font-weight:700;font-size:1.15rem;">Εκτύπωση</button>
+<script>
+(function() {{
+  var htmlContent = {js_content};
+  document.getElementById('openTabBtn').onclick = function() {{
+    var blob = new Blob([htmlContent], {{ type: 'text/html;charset=utf-8' }});
+    var url = URL.createObjectURL(blob);
+    window.open(url, '_blank');
+  }};
+}})();
+</script>
+</body></html>"""
+
 # --- Data Dictionaries ---
 insurable_ceiling_old = {
     '2002': 1884.75, '2003': 1960.25, '2004': 2058.25, '2005': 2140.50, '2006': 2226.00,
@@ -93,54 +180,16 @@ insurable_ceiling_new = {
     '2022': 6500.00, '2023': 7126.94, '2024': 7126.94, '2025': 7572.62, '2026': 7572.62
 }
 
-DTK_TABLE = {
-    2020: {
-        2002: 1.31786, 2003: 1.27329, 2004: 1.23741, 2005: 1.19556, 2006: 1.15849,
-        2007: 1.12584, 2008: 1.08046, 2009: 1.06754, 2010: 1.01949, 2011: 1,
-        2012: 1, 2013: 1, 2014: 1, 2015: 1.01169, 2016: 1.02011, 2017: 1.0088,
-        2018: 1.00253, 2019: 1, 2020: 1, 2021: 1, 2022: 1, 2023: 1, 2024: 1, 2025: 1
-    },
-    2021: {
-        2002: 1.30204, 2003: 1.25801, 2004: 1.22256, 2005: 1.18121, 2006: 1.14459,
-        2007: 1.11233, 2008: 1.0675, 2009: 1.05473, 2010: 1.00726, 2011: 1,
-        2012: 1, 2013: 1, 2014: 1, 2015: 1, 2016: 1.00787, 2017: 1, 2018: 1,
-        2019: 1, 2020: 1, 2021: 1, 2022: 1, 2023: 1, 2024: 1, 2025: 1
-    },
-    2022: {
-        2002: 1.31758, 2003: 1.27302, 2004: 1.23714, 2005: 1.19531, 2006: 1.15824,
-        2007: 1.1256, 2008: 1.08023, 2009: 1.06742, 2010: 1.01951, 2011: 1,
-        2012: 1, 2013: 1, 2014: 1, 2015: 1.0113, 2016: 1.01945, 2017: 1.00836,
-        2018: 1.00235, 2019: 1, 2020: 1.01200, 2021: 1, 2022: 1, 2023: 1, 2024: 1, 2025: 1
-    },
-    2023: {
-        2002: 1.44406, 2003: 1.39523, 2004: 1.35591, 2005: 1.31006, 2006: 1.26944,
-        2007: 1.23366, 2008: 1.18393, 2009: 1.16990, 2010: 1.11738, 2011: 1.08168,
-        2012: 1.06570, 2013: 1.07538, 2014: 1.08954, 2015: 1.10838, 2016: 1.11732,
-        2017: 1.10516, 2018: 1.09857, 2019: 1.09529, 2020: 1.10915, 2021: 1.09600,
-        2022: 1.00000, 2023: 1.00000, 2024: 1, 2025: 1
-    },
-    2024: {
-        2002: 1.49444, 2003: 1.44391, 2004: 1.40321, 2005: 1.35576, 2006: 1.31372,
-        2007: 1.27670, 2008: 1.22524, 2009: 1.21059, 2010: 1.15610, 2011: 1.11885,
-        2012: 1.10229, 2013: 1.11254, 2014: 1.12734, 2015: 1.14725, 2016: 1.15680,
-        2017: 1.14398, 2018: 1.13686, 2019: 1.13400, 2020: 1.14833, 2021: 1.13444,
-        2022: 1.03465, 2023: 1.00000, 2024: 1.00000, 2025: 1.00000
-    },
-    2025: {
-        2002: 1.53541, 2003: 1.48349, 2004: 1.44168, 2005: 1.39293, 2006: 1.34974,
-        2007: 1.31170, 2008: 1.25883, 2009: 1.24378, 2010: 1.18780, 2011: 1.14952,
-        2012: 1.13251, 2013: 1.14304, 2014: 1.15824, 2015: 1.17870, 2016: 1.18852,
-        2017: 1.17534, 2018: 1.16803, 2019: 1.16508, 2020: 1.17981, 2021: 1.16554,
-        2022: 1.06301, 2023: 1.02741, 2024: 1.00000, 2025: 1.00000
-    },
-    2026: {
-        2002: 1.57226, 2003: 1.51910, 2004: 1.47628, 2005: 1.42636, 2006: 1.38213,
-        2007: 1.34318, 2008: 1.28904, 2009: 1.27363, 2010: 1.21631, 2011: 1.17711,
-        2012: 1.15969, 2013: 1.17047, 2014: 1.18604, 2015: 1.20699, 2016: 1.21705,
-        2017: 1.20355, 2018: 1.19606, 2019: 1.19304, 2020: 1.20813, 2021: 1.19351,
-        2022: 1.08852, 2023: 1.05207, 2024: 1.02400, 2025: 1.02400, 2026: 1.00000
-    }
-}
+def load_dtk_table():
+    """Φόρτωση πίνακα ΔΤΚ από εξωτερικό JSON αρχείο (dtk_table.json)."""
+    import os
+    dtk_path = os.path.join(os.path.dirname(__file__), "dtk_table.json")
+    with open(dtk_path, "r", encoding="utf-8") as f:
+        raw = json.load(f)
+    # Μετατροπή κλειδιών σε int (έτος αναφοράς & έτος εισφοράς)
+    return {int(ref_year): {int(k): v for k, v in factors.items()} for ref_year, factors in raw["data"].items()}
+
+DTK_TABLE = load_dtk_table()
 
 
 # --- Helper Functions ---
@@ -151,6 +200,70 @@ def load_data(uploaded_file):
         df_monthly, df_annual = parse_efka_pdf(file_bytes)
         return df_monthly, df_annual
     return None, None
+
+# --- Dialog: Επιβεβαίωση πακέτων πριν τον υπολογισμό ---
+def _render_package_confirmation(all_pkgs, sel_pkgs, target_key):
+    """Κοινή λογική για dialog επιβεβαίωσης πακέτων κάλυψης."""
+    params = st.session_state.get(f"pension_params_{target_key}", {})
+
+    # --- Πακέτα κάλυψης ---
+    if sel_pkgs:
+        included = sel_pkgs
+        excluded = [p for p in all_pkgs if p not in sel_pkgs]
+    else:
+        included = all_pkgs
+        excluded = []
+
+    st.markdown("**Επιλεγμένα πακέτα κάλυψης για τον υπολογισμό:**")
+    for p in included:
+        st.markdown(f"&nbsp;&nbsp; ✅ &ensp;{p}")
+
+    if excluded:
+        st.markdown("**Αποκλεισμένα πακέτα κάλυψης:**")
+        for p in excluded:
+            st.markdown(f"&nbsp;&nbsp; ❌ &ensp;{p}")
+    else:
+        st.info("Συμπεριλαμβάνονται όλα τα διαθέσιμα πακέτα κάλυψης.")
+
+    # --- Παράμετροι υπολογισμού ---
+    st.markdown("---")
+    st.markdown("**Παράμετροι υπολογισμού:**")
+    dtk_year = params.get("dtk_year", "—")
+    buyout_days = params.get("buyout_days", 0)
+    buyout_amount = params.get("buyout_amount", 0.0)
+
+    col_p1, col_p2, col_p3 = st.columns(3)
+    col_p1.metric("Έτος αναφοράς ΔΤΚ", str(dtk_year))
+    col_p2.metric("Ημέρες εξαγοράς", str(buyout_days) if buyout_days else "—")
+    col_p3.metric("Ποσό εξαγοράς", format_currency_gr(buyout_amount) if buyout_amount else "—")
+
+    st.markdown("---")
+    st.markdown("**Θα συνεχίσετε με τον υπολογισμό;**")
+
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("Συνέχεια", use_container_width=True, type="primary", key=f"confirm_{target_key}"):
+            st.session_state[f"pension_confirmed_{target_key}"] = True
+            st.rerun()
+    with col2:
+        if st.button("Ακύρωση", use_container_width=True, key=f"cancel_{target_key}"):
+            st.session_state.pop(f"pension_params_{target_key}", None)
+            st.rerun()
+
+
+@st.dialog("Επιβεβαίωση Υπολογισμού Κύριας", width="large")
+def confirm_pension_kyrias():
+    all_pkgs = st.session_state.get("all_packages_kyrias", [])
+    sel_pkgs = st.session_state.get("selected_packages_kyrias", [])
+    _render_package_confirmation(all_pkgs, sel_pkgs, "kyrias")
+
+
+@st.dialog("Επιβεβαίωση Υπολογισμού Επικουρικής", width="large")
+def confirm_pension_epik():
+    all_pkgs = st.session_state.get("all_packages_epik", [])
+    sel_pkgs = st.session_state.get("selected_packages_epik", [])
+    _render_package_confirmation(all_pkgs, sel_pkgs, "epik")
+
 
 # --- UI Layout ---
 st.markdown(
@@ -241,6 +354,19 @@ st.markdown(
     button[title="Manage app"] {display: none;}
     div[data-testid="stDecoration"] {display: none;}
     footer {visibility: hidden;}
+    /* DataFrame toolbar: above table + larger buttons */
+    [data-testid="stElementToolbar"] {
+        z-index: 9999 !important;
+    }
+    [data-testid="stElementToolbar"] button {
+        min-width: 40px !important;
+        min-height: 40px !important;
+        padding: 10px !important;
+    }
+    [data-testid="stElementToolbar"] button svg {
+        width: 22px !important;
+        height: 22px !important;
+    }
     </style>
     <div class="top-bar">
         <div>
@@ -318,8 +444,12 @@ if effective_file is not None and st.session_state["analysis_requested"]:
 
         # --- Tab 1: Full Analysis ---
         with tab1:
-            st.header("Ανάλυση Κύριας Αποδοχών / Εισφορών / Πλαφόν")
-            
+            _col_title1, _col_warn1 = st.columns([3, 4])
+            with _col_title1:
+                st.header("Ανάλυση Κύριας Αποδοχών / Εισφορών / Πλαφόν")
+            with _col_warn1:
+                st.warning("⚠️ **Πριν προχωρήσετε, βεβαιωθείτε ότι έχετε επιλέξει τα σωστά Πακέτα Κάλυψης στο φίλτρο παρακάτω.** Η ανάλυση βασίζεται στα επιλεγμένα πακέτα.")
+
             df_analysis = df_monthly.copy()
             period_str = df_analysis['ΠΕΡΙΟΔΟΣ'].astype(str).str.strip()
             # Κανονικοποίηση μήνα σε 2 ψηφία για σταθερό parsing (π.χ. 1/2003 -> 01/2003)
@@ -403,15 +533,22 @@ if effective_file is not None and st.session_state["analysis_requested"]:
                 if selected_package_labels:
                     selected_packages = [package_label_to_code[label] for label in selected_package_labels]
                     filtered = filtered[filtered['ΚΩΔ. ΠΑΚΕΤΟ ΚΑΛΥΨΗΣ'].astype(str).isin(selected_packages)]
-                
+
                 # Αποθήκευση φιλτραρισμένων δεδομένων στο session_state
                 st.session_state["filtered_analysis"] = filtered.copy()
+                st.session_state["all_packages_kyrias"] = package_options
+                st.session_state["selected_packages_kyrias"] = list(selected_package_labels)
                 df_analysis = filtered.copy()
             elif "filtered_analysis" in st.session_state:
                 # Χρήση αποθηκευμένων φιλτραρισμένων δεδομένων
                 df_analysis = st.session_state["filtered_analysis"].copy()
             else:
                 df_analysis = filtered.copy()
+
+            # Αρχικοποίηση πακέτων αν δεν έχουν αποθηκευτεί ακόμα
+            if "all_packages_kyrias" not in st.session_state:
+                st.session_state["all_packages_kyrias"] = package_options
+                st.session_state["selected_packages_kyrias"] = []
 
             # Υπολογισμός ΒΑΣΙΚΟ ΠΛΑΦΟΝ με βάση το επιλεγμένο ceiling_type
             ceiling_type = st.session_state.get("ceiling_type", "Παλιός")
@@ -477,13 +614,16 @@ if effective_file is not None and st.session_state["analysis_requested"]:
             )
 
             display_df = df_analysis.copy()
+            # Περιγραφή πακέτου κάλυψης από τα ετήσια δεδομένα
+            _pkg_map = {str(k): (v or '') for k, v in package_desc_map.items()}
+            display_df['ΠΕΡΙΓΡΑΦΗ ΠΑΚΕΤΟΥ'] = (
+                display_df['ΚΩΔ. ΠΑΚΕΤΟ ΚΑΛΥΨΗΣ'].astype(str).replace('nan', '').map(_pkg_map).fillna('')
+            )
             # Κρατάμε σταθερά keys για την ομαδοποίηση πριν "κενώσουμε" τα πεδία
             display_df['ΕΤΟΣ_KEY'] = display_df['ΕΤΟΣ']
             display_df['ΠΕΡΙΟΔΟΣ_KEY'] = display_df['ΠΕΡΙΟΔΟΣ']
 
             # Ταξινόμηση για ομαδοποίηση ανά έτος και περίοδο
-            # Ειδικές αποδοχές (Δώρα/Επίδομα) στο τέλος του έτους
-            # Εντός μήνα, ταξινόμηση με βάση ΤΥΠΟΣ ΑΠΟΔΟΧΩΝ (01 πρώτα)
             display_df['ΤΥΠΟΣ_SORT'] = display_df['ΤΥΠΟΣ ΑΠΟΔΟΧΩΝ'].astype(str)
             display_df = display_df.sort_values([
                 'ΕΤΟΣ_KEY', 'IS_SPECIAL', 'ΠΕΡΙΟΔΟΣ_KEY', 'ΤΥΠΟΣ_SORT'
@@ -508,7 +648,7 @@ if effective_file is not None and st.session_state["analysis_requested"]:
             )
 
             visible_columns = [
-                'ΕΤΟΣ', 'ΠΕΡΙΟΔΟΣ', 'ΚΩΔ. ΠΑΚΕΤΟ ΚΑΛΥΨΗΣ', 'ΗΜΕΡ. ΑΠΑΣΧ.', 'ΤΥΠΟΣ ΑΠΟΔΟΧΩΝ',
+                'ΕΤΟΣ', 'ΠΕΡΙΟΔΟΣ', 'ΚΩΔ. ΠΑΚΕΤΟ ΚΑΛΥΨΗΣ', 'ΠΕΡΙΓΡΑΦΗ ΠΑΚΕΤΟΥ', 'ΗΜΕΡ. ΑΠΑΣΧ.', 'ΤΥΠΟΣ ΑΠΟΔΟΧΩΝ',
                 'ΠΕΡΙΓΡΑΦΗ_ΑΠΟΔΟΧΩΝ', 'ΑΠΟΔΟΧΕΣ', 'ΕΙΣΦΟΡΕΣ', 'ΠΟΣΟΣΤΟ', 'ΑΠΟΔΟΧΕΣ ΜΗΝΑ',
                 'ΕΙΣΦΟΡΙΣΙΜΟ ΠΛΑΦΟΝ', 'ΠΕΡΙΚΟΠΗ', 'ΕΙΣΦΟΡΙΣΙΜΕΣ ΑΠΟΔΟΧΕΣ'
             ]
@@ -577,6 +717,9 @@ if effective_file is not None and st.session_state["analysis_requested"]:
                     display_df_with_totals[col] = display_df_with_totals[col].replace(0, '')
 
             st.dataframe(display_df_with_totals, use_container_width=True, hide_index=True)
+            html_analysis = dataframe_to_printable_html(display_df_with_totals, "Ανάλυση Κύριας Αποδοχών / Εισφορών / Πλαφόν")
+            if html_analysis:
+                components.html(html_open_in_new_tab_component(html_analysis), height=56)
 
             yearly_totals = pd.DataFrame(yearly_totals_rows)
             # Αποθήκευση στο session_state μόνο αν εφαρμόστηκαν φίλτρα ή αν δεν υπάρχει ακόμα
@@ -589,7 +732,7 @@ if effective_file is not None and st.session_state["analysis_requested"]:
 
             # Διάβασμα από session_state
             yearly_totals = st.session_state.get("yearly_totals")
-            
+
             if yearly_totals is not None and not yearly_totals.empty:
                 pension_df = yearly_totals.copy()
                 pension_df['ΕΤΟΣ'] = pd.to_numeric(pension_df['ΕΤΟΣ'])
@@ -615,9 +758,26 @@ if effective_file is not None and st.session_state["analysis_requested"]:
 
                     calculate = st.form_submit_button("Υπολογισμός")
 
-                if not calculate:
+                # Ροή με dialog επιβεβαίωσης πακέτων
+                if calculate:
+                    # Αποθήκευση παραμέτρων φόρμας στο session_state
+                    st.session_state["pension_params_kyrias"] = {
+                        "dtk_year": selected_dtk_year,
+                        "buyout_days": buyout_days,
+                        "buyout_year": buyout_year,
+                        "buyout_amount": buyout_amount,
+                    }
+                    confirm_pension_kyrias()
+
+                run_kyrias = st.session_state.pop("pension_confirmed_kyrias", False)
+                if not calculate and not run_kyrias:
                     st.info("Πατήστε «Υπολογισμός» για να εφαρμοστούν οι αλλαγές.")
-                else:
+                elif run_kyrias:
+                    _p = st.session_state.get("pension_params_kyrias", {})
+                    selected_dtk_year = _p.get("dtk_year", 2026)
+                    buyout_days = _p.get("buyout_days", 0)
+                    buyout_year = _p.get("buyout_year", 2026)
+                    buyout_amount = _p.get("buyout_amount", 0.0)
                     dtk_factors = DTK_TABLE[selected_dtk_year]
                     buyout_dtk = dtk_factors.get(buyout_year, 1.0)
                     buyout_insurable = buyout_amount * 5
@@ -667,11 +827,14 @@ if effective_file is not None and st.session_state["analysis_requested"]:
                         [{'selector': 'th', 'props': [('text-align', 'left')]}]
                     )
                     st.dataframe(styled_pension, use_container_width=True, hide_index=True)
+                    html_pension = dataframe_to_printable_html(pension_display, "Συντάξιμες Αποδοχές Κύριας")
+                    if html_pension:
+                        components.html(html_open_in_new_tab_component(html_pension), height=56)
 
                     # --- Εξαγωγή JSON για Syntaksi Pro ---
                     st.markdown("---")
                     st.subheader("Εξαγωγή για Syntaksi Pro")
-                    
+
                     # Δημιουργία JSON - εξαιρούμε τη γραμμή ΕΞΑΓΟΡΑ
                     json_data = {}
                     for _, row in pension_df.iterrows():
@@ -679,7 +842,7 @@ if effective_file is not None and st.session_state["analysis_requested"]:
                         if year == "ΕΞΑΓΟΡΑ":
                             continue
                         year_str = str(int(year)) if isinstance(year, (int, float)) else str(year)
-                        
+
                         # ika_YYYY = ΗΜΕΡ. ΑΠΑΣΧ.
                         json_data[f"ika_{year_str}"] = {
                             "value": int(row['ΗΜΕΡ. ΑΠΑΣΧ.']),
@@ -690,7 +853,7 @@ if effective_file is not None and st.session_state["analysis_requested"]:
                             "value": round(row['ΕΙΣΦΟΡΙΣΙΜΕΣ ΑΠΟΔΟΧΕΣ'], 2),
                             "type": "number"
                         }
-                    
+
                     # Προσθήκη δεδομένων εξαγοράς
                     json_data["eksagorasmenes_imeres"] = {
                         "value": int(buyout_days),
@@ -704,7 +867,7 @@ if effective_file is not None and st.session_state["analysis_requested"]:
                         "value": round(buyout_dtk, 5),
                         "type": "number"
                     }
-                    
+
                     # Προσθήκη ΔΤΚ αναφοράς και έτους εθνικής
                     json_data["dtk"] = {
                         "value": int(selected_dtk_year),
@@ -714,9 +877,9 @@ if effective_file is not None and st.session_state["analysis_requested"]:
                         "value": int(selected_dtk_year),
                         "type": "number"
                     }
-                    
+
                     json_str = json.dumps(json_data, indent=2, ensure_ascii=False)
-                    
+
                     col_json1, col_json2, col_json3 = st.columns([1, 2, 1])
                     with col_json2:
                         st.download_button(
@@ -727,24 +890,28 @@ if effective_file is not None and st.session_state["analysis_requested"]:
                             use_container_width=True
                         )
             else:
-                 st.warning("Δεν υπάρχουν συνοπτικά δεδομένα για τον υπολογισμό των συντάξιμων αποδοχών.")
+                st.warning("Δεν υπάρχουν συνοπτικά δεδομένα για τον υπολογισμό των συντάξιμων αποδοχών.")
 
         # --- Tab 3: Επικουρική Ανάλυση (2002-2014) ---
         yearly_totals_epik = None
-        
+
         with tab3:
-            st.header("Ανάλυση Επικουρικής (2002-2014)")
-            
+            _col_title3, _col_warn3 = st.columns([3, 4])
+            with _col_title3:
+                st.header("Ανάλυση Επικουρικής (2002-2014)")
+            with _col_warn3:
+                st.warning("⚠️ **Πριν προχωρήσετε, βεβαιωθείτε ότι έχετε επιλέξει τα σωστά Πακέτα Κάλυψης στο φίλτρο παρακάτω.** Η ανάλυση βασίζεται στα επιλεγμένα πακέτα.")
+
             df_analysis_epik = df_monthly.copy()
             period_str_epik = df_analysis_epik['ΠΕΡΙΟΔΟΣ'].astype(str).str.strip()
             period_str_epik = period_str_epik.str.replace(r'^(\d{1})/', r'0\1/', regex=True)
             df_analysis_epik['ΠΕΡΙΟΔΟΣ'] = period_str_epik
             period_dt_epik = pd.to_datetime(period_str_epik, format='%m/%Y', errors='coerce')
             df_analysis_epik['ΕΤΟΣ'] = period_dt_epik.dt.year.astype('Int64').astype(str)
-            
+
             # Φιλτράρισμα μόνο για 2002-2014
             df_analysis_epik = df_analysis_epik[df_analysis_epik['ΕΤΟΣ'].isin([str(y) for y in range(2002, 2015)])]
-            
+
             if df_analysis_epik.empty:
                 st.warning("Δεν υπάρχουν δεδομένα για την περίοδο 2002-2014.")
             else:
@@ -823,15 +990,22 @@ if effective_file is not None and st.session_state["analysis_requested"]:
                     if selected_package_labels_epik:
                         selected_packages_epik = [package_label_to_code_epik[label] for label in selected_package_labels_epik]
                         filtered_epik = filtered_epik[filtered_epik['ΚΩΔ. ΠΑΚΕΤΟ ΚΑΛΥΨΗΣ'].astype(str).isin(selected_packages_epik)]
-                    
+
                     # Αποθήκευση φιλτραρισμένων δεδομένων στο session_state
                     st.session_state["filtered_analysis_epik"] = filtered_epik.copy()
+                    st.session_state["all_packages_epik"] = package_options_epik
+                    st.session_state["selected_packages_epik"] = list(selected_package_labels_epik)
                     df_analysis_epik = filtered_epik.copy()
                 elif "filtered_analysis_epik" in st.session_state:
                     # Χρήση αποθηκευμένων φιλτραρισμένων δεδομένων
                     df_analysis_epik = st.session_state["filtered_analysis_epik"].copy()
                 else:
                     df_analysis_epik = filtered_epik.copy()
+
+                # Αρχικοποίηση πακέτων αν δεν έχουν αποθηκευτεί ακόμα
+                if "all_packages_epik" not in st.session_state:
+                    st.session_state["all_packages_epik"] = package_options_epik
+                    st.session_state["selected_packages_epik"] = []
 
                 # Υπολογισμός ΒΑΣΙΚΟ ΠΛΑΦΟΝ
                 ceiling_type_epik = st.session_state.get("ceiling_type_epik", "Παλιός")
@@ -869,11 +1043,11 @@ if effective_file is not None and st.session_state["analysis_requested"]:
 
                 monthly_plafon_epik = df_analysis_epik.groupby('ΠΕΡΙΟΔΟΣ', dropna=False)['ΕΙΣΦΟΡΙΣΙΜΟ ΠΛΑΦΟΝ'].max()
                 monthly_insurable_epik = (df_analysis_epik['ΠΕΡΙΟΔΟΣ'].map(monthly_earnings_epik)
-                                     .combine(df_analysis_epik['ΠΕΡΙΟΔΟΣ'].map(monthly_plafon_epik), min))
+                                          .combine(df_analysis_epik['ΠΕΡΙΟΔΟΣ'].map(monthly_plafon_epik), min))
                 df_analysis_epik['ΕΙΣΦΟΡΙΣΙΜΕΣ ΑΠΟΔΟΧΕΣ'] = monthly_insurable_epik
 
                 perikopi_map_epik = (df_analysis_epik['ΠΕΡΙΟΔΟΣ'].map(monthly_earnings_epik) -
-                                df_analysis_epik['ΠΕΡΙΟΔΟΣ'].map(monthly_plafon_epik))
+                                     df_analysis_epik['ΠΕΡΙΟΔΟΣ'].map(monthly_plafon_epik))
                 df_analysis_epik['ΠΕΡΙΚΟΠΗ'] = perikopi_map_epik.where(perikopi_map_epik > 0, None)
 
                 df_analysis_epik.loc[df_analysis_epik['IS_SPECIAL'], 'ΕΙΣΦΟΡΙΣΙΜΕΣ ΑΠΟΔΟΧΕΣ'] = df_analysis_epik.loc[
@@ -890,10 +1064,17 @@ if effective_file is not None and st.session_state["analysis_requested"]:
                 )
 
                 display_df_epik = df_analysis_epik.copy()
+                # Περιγραφή πακέτου κάλυψης από τα ετήσια δεδομένα
+                _pkg_map_epik = {str(k): (v or '') for k, v in package_desc_map_epik.items()}
+                display_df_epik['ΠΕΡΙΓΡΑΦΗ ΠΑΚΕΤΟΥ'] = (
+                    display_df_epik['ΚΩΔ. ΠΑΚΕΤΟ ΚΑΛΥΨΗΣ'].astype(str).replace('nan', '').map(_pkg_map_epik).fillna('')
+                )
                 display_df_epik['ΕΤΟΣ_KEY'] = display_df_epik['ΕΤΟΣ']
                 display_df_epik['ΠΕΡΙΟΔΟΣ_KEY'] = display_df_epik['ΠΕΡΙΟΔΟΣ']
                 display_df_epik['ΤΥΠΟΣ_SORT'] = display_df_epik['ΤΥΠΟΣ ΑΠΟΔΟΧΩΝ'].astype(str)
-                display_df_epik = display_df_epik.sort_values(['ΕΤΟΣ_KEY', 'IS_SPECIAL', 'ΠΕΡΙΟΔΟΣ_KEY', 'ΤΥΠΟΣ_SORT'])
+                display_df_epik = display_df_epik.sort_values([
+                    'ΕΤΟΣ_KEY', 'IS_SPECIAL', 'ΠΕΡΙΟΔΟΣ_KEY', 'ΤΥΠΟΣ_SORT'
+                ])
 
                 display_df_epik['ΕΤΟΣ'] = display_df_epik['ΕΤΟΣ'].where(~display_df_epik.duplicated(['ΕΤΟΣ_KEY']), '')
                 display_df_epik['ΠΕΡΙΟΔΟΣ'] = display_df_epik['ΠΕΡΙΟΔΟΣ'].where(~display_df_epik.duplicated(['ΕΤΟΣ_KEY', 'ΠΕΡΙΟΔΟΣ_KEY']), '')
@@ -911,17 +1092,18 @@ if effective_file is not None and st.session_state["analysis_requested"]:
                 )
 
                 visible_columns_epik = [
-                    'ΕΤΟΣ', 'ΠΕΡΙΟΔΟΣ', 'ΚΩΔ. ΠΑΚΕΤΟ ΚΑΛΥΨΗΣ', 'ΗΜΕΡ. ΑΠΑΣΧ.', 'ΤΥΠΟΣ ΑΠΟΔΟΧΩΝ',
+                    'ΕΤΟΣ', 'ΠΕΡΙΟΔΟΣ', 'ΚΩΔ. ΠΑΚΕΤΟ ΚΑΛΥΨΗΣ', 'ΠΕΡΙΓΡΑΦΗ ΠΑΚΕΤΟΥ', 'ΗΜΕΡ. ΑΠΑΣΧ.', 'ΤΥΠΟΣ ΑΠΟΔΟΧΩΝ',
                     'ΠΕΡΙΓΡΑΦΗ_ΑΠΟΔΟΧΩΝ', 'ΑΠΟΔΟΧΕΣ', 'ΕΙΣΦΟΡΕΣ', 'ΠΟΣΟΣΤΟ', 'ΑΠΟΔΟΧΕΣ ΜΗΝΑ',
                     'ΕΙΣΦΟΡΙΣΙΜΟ ΠΛΑΦΟΝ', 'ΠΕΡΙΚΟΠΗ', 'ΕΙΣΦΟΡΙΣΙΜΕΣ ΑΠΟΔΟΧΕΣ'
                 ]
                 display_df_visible_epik = display_df_epik[visible_columns_epik]
 
+                # Προσθήκη γραμμών σύνοψης ανά έτος
                 rows_epik = []
                 summary_flags_epik = []
                 yearly_totals_rows_epik = []
                 years_epik = sorted([y for y in display_df_epik['ΕΤΟΣ_KEY'].dropna().unique()])
-                
+
                 for year in years_epik:
                     year_mask = display_df_epik['ΕΤΟΣ_KEY'] == year
                     year_rows = display_df_visible_epik[year_mask]
@@ -966,8 +1148,10 @@ if effective_file is not None and st.session_state["analysis_requested"]:
                 display_df_with_totals_epik = round_float_columns(display_df_with_totals_epik)
                 display_df_with_totals_epik = round_numeric_columns(
                     display_df_with_totals_epik,
-                    columns=['ΑΠΟΔΟΧΕΣ', 'ΕΙΣΦΟΡΕΣ', 'ΠΟΣΟΣΤΟ', 'ΑΠΟΔΟΧΕΣ ΜΗΝΑ',
-                            'ΕΙΣΦΟΡΙΣΙΜΟ ΠΛΑΦΟΝ', 'ΠΕΡΙΚΟΠΗ', 'ΕΙΣΦΟΡΙΣΙΜΕΣ ΑΠΟΔΟΧΕΣ'],
+                    columns=[
+                        'ΑΠΟΔΟΧΕΣ', 'ΕΙΣΦΟΡΕΣ', 'ΠΟΣΟΣΤΟ', 'ΑΠΟΔΟΧΕΣ ΜΗΝΑ',
+                        'ΕΙΣΦΟΡΙΣΙΜΟ ΠΛΑΦΟΝ', 'ΠΕΡΙΚΟΠΗ', 'ΕΙΣΦΟΡΙΣΙΜΕΣ ΑΠΟΔΟΧΕΣ'
+                    ],
                     decimals=2
                 )
                 for col in ['ΗΜΕΡ. ΑΠΑΣΧ.', 'ΕΙΣΦΟΡΕΣ', 'ΠΟΣΟΣΤΟ']:
@@ -975,9 +1159,11 @@ if effective_file is not None and st.session_state["analysis_requested"]:
                         display_df_with_totals_epik[col] = display_df_with_totals_epik[col].replace(0, '')
 
                 st.dataframe(display_df_with_totals_epik, use_container_width=True, hide_index=True)
+                html_analysis_epik = dataframe_to_printable_html(display_df_with_totals_epik, "Ανάλυση Επικουρικής (2002-2014)")
+                if html_analysis_epik:
+                    components.html(html_open_in_new_tab_component(html_analysis_epik), height=56)
 
                 yearly_totals_epik = pd.DataFrame(yearly_totals_rows_epik)
-                # Αποθήκευση στο session_state μόνο αν εφαρμόστηκαν φίλτρα ή αν δεν υπάρχει ακόμα
                 if apply_filters_epik or "yearly_totals_epik" not in st.session_state:
                     st.session_state["yearly_totals_epik"] = yearly_totals_epik
 
@@ -987,7 +1173,7 @@ if effective_file is not None and st.session_state["analysis_requested"]:
 
             # Διάβασμα από session_state
             yearly_totals_epik = st.session_state.get("yearly_totals_epik")
-            
+
             if yearly_totals_epik is not None and not yearly_totals_epik.empty:
                 pension_df_epik = yearly_totals_epik.copy()
                 pension_df_epik['ΕΤΟΣ'] = pd.to_numeric(pension_df_epik['ΕΤΟΣ'])
@@ -1014,9 +1200,25 @@ if effective_file is not None and st.session_state["analysis_requested"]:
 
                     calculate_epik = st.form_submit_button("Υπολογισμός")
 
-                if not calculate_epik:
+                # Ροή με dialog επιβεβαίωσης πακέτων
+                if calculate_epik:
+                    st.session_state["pension_params_epik"] = {
+                        "dtk_year": selected_dtk_year_epik,
+                        "buyout_days": buyout_days_epik,
+                        "buyout_year": buyout_year_epik,
+                        "buyout_amount": buyout_amount_epik,
+                    }
+                    confirm_pension_epik()
+
+                run_epik = st.session_state.pop("pension_confirmed_epik", False)
+                if not calculate_epik and not run_epik:
                     st.info("Πατήστε «Υπολογισμός» για να εφαρμοστούν οι αλλαγές.")
-                else:
+                elif run_epik:
+                    _pe = st.session_state.get("pension_params_epik", {})
+                    selected_dtk_year_epik = _pe.get("dtk_year", 2026)
+                    buyout_days_epik = _pe.get("buyout_days", 0)
+                    buyout_year_epik = _pe.get("buyout_year", 2026)
+                    buyout_amount_epik = _pe.get("buyout_amount", 0.0)
                     dtk_factors_epik = DTK_TABLE[selected_dtk_year_epik]
                     buyout_dtk_epik = dtk_factors_epik.get(buyout_year_epik, 1.0)
                     buyout_insurable_epik = buyout_amount_epik / 0.06
@@ -1063,18 +1265,21 @@ if effective_file is not None and st.session_state["analysis_requested"]:
                         [{'selector': 'th', 'props': [('text-align', 'left')]}]
                     )
                     st.dataframe(styled_pension_epik, use_container_width=True, hide_index=True)
+                    html_pension_epik = dataframe_to_printable_html(pension_display_epik, "Συντάξιμες Αποδοχές Επικουρικής")
+                    if html_pension_epik:
+                        components.html(html_open_in_new_tab_component(html_pension_epik), height=56)
 
                     # --- Εξαγωγή JSON για Syntaksi Pro (Επικουρική) ---
                     st.markdown("---")
                     st.subheader("Εξαγωγή για Syntaksi Pro (Επικουρική)")
-                    
+
                     json_data_epik = {}
                     for _, row in pension_df_epik.iterrows():
                         year = row['ΕΤΟΣ']
                         if year == "ΕΞΑΓΟΡΑ":
                             continue
                         year_str = str(int(year)) if isinstance(year, (int, float)) else str(year)
-                        
+
                         json_data_epik[f"ika_{year_str}"] = {
                             "value": int(row['ΗΜΕΡ. ΑΠΑΣΧ.']),
                             "type": "number"
@@ -1083,7 +1288,7 @@ if effective_file is not None and st.session_state["analysis_requested"]:
                             "value": round(row['ΕΙΣΦΟΡΙΣΙΜΕΣ ΑΠΟΔΟΧΕΣ'], 2),
                             "type": "number"
                         }
-                    
+
                     json_data_epik["eksagorasmenes_imeres"] = {
                         "value": int(buyout_days_epik),
                         "type": "number"
@@ -1104,9 +1309,9 @@ if effective_file is not None and st.session_state["analysis_requested"]:
                         "value": int(selected_dtk_year_epik),
                         "type": "number"
                     }
-                    
+
                     json_str_epik = json.dumps(json_data_epik, indent=2, ensure_ascii=False)
-                    
+
                     col_json1e, col_json2e, col_json3e = st.columns([1, 2, 1])
                     with col_json2e:
                         st.download_button(
@@ -1120,19 +1325,36 @@ if effective_file is not None and st.session_state["analysis_requested"]:
             else:
                 st.warning("Δεν υπάρχουν δεδομένα για την περίοδο 2002-2014.")
 
-        # --- Tab 5: Summary Data ---
+        # --- Tab 5: Συνοπτικά Δεδομένα ---
         with tab5:
             st.header("Συνοπτικά Ετήσια Δεδομένα")
             if df_annual is not None and not df_annual.empty:
-                st.dataframe(round_float_columns(df_annual), use_container_width=True, hide_index=True)
+                df_annual_display = round_float_columns(df_annual)
+                st.dataframe(df_annual_display, use_container_width=True, hide_index=True)
+                html_annual = dataframe_to_printable_html(df_annual_display, "Συνοπτικά Ετήσια Δεδομένα")
+                if html_annual:
+                    components.html(html_open_in_new_tab_component(html_annual), height=56)
             else:
                 st.warning("Δεν βρέθηκαν συνοπτικά ετήσια δεδομένα.")
 
-        # --- Tab 6: Raw Data ---
+        # --- Tab 6: Στοιχεία χωρίς επεξεργασία ---
         with tab6:
             st.header("Στοιχεία χωρίς επεξεργασία")
-            st.dataframe(round_float_columns(df_monthly), use_container_width=True, hide_index=True)
+            df_monthly_display = round_float_columns(df_monthly)
+            st.dataframe(df_monthly_display, use_container_width=True, hide_index=True)
+            html_monthly = dataframe_to_printable_html(df_monthly_display, "Στοιχεία χωρίς επεξεργασία")
+            if html_monthly:
+                components.html(html_open_in_new_tab_component(html_monthly), height=56)
 
     elif uploaded_file:
         st.error("Δεν ήταν δυνατή η εξαγωγή δεδομένων από το αρχείο PDF. Βεβαιωθείτε ότι το αρχείο είναι έγκυρο.")
 
+st.markdown("---")
+st.markdown(
+    """
+    <div style="background:#f8f9fa; border-left:4px solid #6b73ff; padding:12px 16px; font-size:0.8rem; color:#374151; line-height:1.5;">
+        <strong>ΣΗΜΑΝΤΙΚΉ ΣΗΜΕΙΩΣΗ:</strong> Η παρούσα αναφορά βασίζεται αποκλειστικά στα δεδομένα που εμφανίζονται στο αρχείο ΑΤΟΜΙΚΟΣ ΛΟΓΑΡΙΑΣΜΟΣ/e-ΕΦΚΑ και αποτελεί απλή επεξεργασία των καταγεγραμμένων εγγραφών με σκοπό τη διευκόλυνση μελέτης του ασφ. ιστορικού του ασφαλισμένου. Η πλατφόρμα ΑΤΟΜΙΚΟΣ ΛΟΓΑΡΙΑΣΜΟΣ ή η ανάλυση από την εφαρμογή αυτή μπορεί να περιέχει κενά ή σφάλματα, και η αναφορά που εξάγεται δεν υποκαθιστά νομική ή οικονομική συμβουλή σε καμία περίπτωση. Αποκλειστικά υπεύθυνος για την επαλήθευση των στοιχείων είναι ο χρήστης. Για θέματα συνταξιοδότησης και οριστικές απαντήσεις αρμόδιος παραμένει αποκλειστικά ο e-ΕΦΚΑ.
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
